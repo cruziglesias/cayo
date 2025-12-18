@@ -1,10 +1,4 @@
-﻿//const urlGeoserver = 'http://00ed66ff-9d44-4cb1-83a7-6dd80b766787.clouding.host:8070/geoserver/wms';
-const urlGeoserver = 'http://localhost:8080/geoserver/wms';
-
-// Asignar layerData según el módulo
-let layerData = 'gmx:municipios2024';
-let styleData = 'municipios_provincias';
-let centerData = [21.6218, -81.5012];
+﻿let centerData = [21.6218, -81.5012];
 let zoomData = 13;
 
 var map = L.map('map', {
@@ -14,6 +8,7 @@ var map = L.map('map', {
 });
 var baseLayers = {};
 var overLayers = {};
+var layerControl;
 // Usa una capa base compatible con EPSG:4326
 
 baseLayers['OSM'] = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -27,12 +22,11 @@ baseLayers['OSM'] = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 baseLayers ["Satélite"] = L.tileLayer('https://khms1.google.com/kh/v=1004&src=app&x={x}&y={y}&z={z}',{
 	maxZoom: 19
 });	
-	
 
 map.zoomControl.setPosition('bottomright');
 
- 
-
+var markersById = {};
+var areasLayer;
 var cluster = L.markerClusterGroup({
     maxClusterRadius: 50, // Radio máximo para formar clústeres (en píxeles)
     disableClusteringAtZoom: 14 // Nivel de zoom en el que no se agrupan
@@ -42,38 +36,11 @@ map.addLayer(cluster);
 
 overLayers['Puntos de interés'] = cluster;
 
-/*let wmsDataLayer = L.tileLayer.wms(urlGeoserver, {
-    layers: layerData,
-    styles: styleData,
-    format: 'image/png',
-    transparent: true,
-    version: '1.1.1',
-    crs: L.CRS.EPSG4326,
-    zIndex: 4
-});
 
-// Agregar la capa WMS al mapa
-map.addLayer(wmsDataLayer);
-
-overLayers['Municipios'] = wmsDataLayer;
-
-// Crear control de leyenda para la capa WMS
-const mapLegend = new MapLegend({
-    serverUrl: urlGeoserver,
-    layer: layerData,
-    style: styleData
-});
-
-// Función para actualizar la leyenda cuando cambie la capa
-function updateLegend(layerName) {
-    if (mapLegend) {
-        mapLegend.setLayer(layerName);
-    }
-}
-*/
+// Cargar capa de áreas (GeoJSON de polígonos)
 
 async function loadSubcategoryIconMap(subcategoryId) {
-    const url = `http://localhost/api/subcategories/${subcategoryId}`;
+    const url = `/api/subcategories/${subcategoryId}`;
     try {
         const result = await $.getJSON(url);
         const hash = result?.map_icon_rel?.hash;
@@ -87,6 +54,10 @@ async function loadSubcategoryIconMap(subcategoryId) {
 // Panel lateral derecho para mostrar detalles
 let infoPanel;
 let infoPanelContent;
+
+function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
+}
 
 function ensureInfoPanel() {
     if (infoPanel) return infoPanel;
@@ -114,6 +85,7 @@ function ensureInfoPanel() {
 }
 
 async function openInfoPanel(markerID) {
+    closeLeftPanel();
     ensureInfoPanel();
 
     infoPanelContent.innerHTML = '<div class="panel-loading">Cargando...</div>';
@@ -131,24 +103,6 @@ async function openInfoPanel(markerID) {
         const contactPhone = data?.phones || '';
         const contactEmail = data?.emails || '';
         const contactWeb = data?.urls || '';
-
-        /*function quickParse(description) {
-            return description
-                // Decodificar
-                .replace(/\\u003C/g, '<')
-                .replace(/\\u003E/g, '>')
-                // Separar por divs
-                .split(/<div>|<\/div>/)
-                // Limpiar espacios y filtrar vacíos
-                .map(item => item.trim())
-                .filter(item => item !== '');
-        }
-        const items = quickParse(description);    
-        const descriptionHTML = items.length
-            ? items.map(src => `
-                ${src}
-                `).join('<br>')
-            : description;    */
 
         const phoneHTML = contactPhone.length
             ? contactPhone.map(src => `
@@ -269,6 +223,384 @@ function closeInfoPanel() {
     }
 }
 
+async function loadGeoJSON() {
+    try {
+        const areas = await $.getJSON(`/api/areas/`);
+
+        // Eliminar capa anterior si ya existe
+        if (areasLayer) {
+            map.removeLayer(areasLayer);
+            delete overLayers['Áreas'];
+            if (layerControl) {
+                layerControl.removeLayer(areasLayer);
+            }
+        }
+
+        // Crear capa GeoJSON con estilo semitransparente
+        areasLayer = L.geoJSON(areas, {
+            style: function (feature) {
+                return {
+                    color: '#232323',        // borde
+                    weight: 2,
+                    fillColor: '#FFFF00',    // relleno
+                    fillOpacity: 0.1        // semitransparente
+                };
+            },
+            onEachFeature: function (feature, layer) {
+                // Popup sencillo con el nombre si existe
+                //const name = feature?.properties?.NOMBRE || feature?.properties?.name || 'Área';
+                layer.bindPopup(getInstalationPopupContent(feature), {
+                    autoClose: false,
+                    keepInView: true, 
+                });
+            }
+        }).addTo(map);
+
+        // Añadir a capas superpuestas para el control de capas
+        overLayers['Áreas'] = areasLayer;
+        if (layerControl) {
+            layerControl.addOverlay(areasLayer, 'Áreas');
+        }
+    } catch (error) {
+        console.error('Error cargando geoJSON', error);
+    }           
+}
+
+let leftPanel;
+let leftPanelContent;
+let navigationStack = [];
+
+async function openLeftPanel() {
+    closeInfoPanel();
+    ensureLeftPanel();
+    leftPanelContent.innerHTML = '<div class="panel-loading">Cargando...</div>';    
+    leftPanel.style.display = 'block'; // control de visibilidad únicamente   
+    try {
+        const areas = await $.getJSON(`/api/areas/`);
+        const features =  areas.features || [];
+
+        const itemsHTML = features.length
+            ? features.map(src => `
+                <div class="panel-info-row">
+                    <div class="subcategory-content">
+                        <div class="fila-con-enlace">
+                            <a href="javascript:void(0)" 
+                            class="enlace-selectable" 
+                            onclick="focusFeature(this, '${src.properties.Coordenadas_GPS_Centro}',${src.properties.id}, 18)">
+                            ${src.properties.NOMBRE}
+                            </a>
+                        </div>
+                    </div>
+                </div> 
+                `).join('')
+            : '';        
+
+        const leftHTML = `
+            <div class="panel-block panel-info">
+                <div class="panel-info-row"><span class="text-name" >Instalaciones</span></div>
+                <br>
+                ${itemsHTML}  
+            </div>
+        `;        
+
+        leftPanelContent.innerHTML = leftHTML;
+        navigationStack.push(leftHTML);
+    } catch (error) {
+        console.error('Error cargando geoJSON', error);
+        infoPanelContent.innerHTML = '<div class="panel-error">No se pudo cargar la información.</div>';
+    }            
+}
+
+let closeLeftBtn;
+let closeLeftIcon;
+
+function ensureLeftPanel() {
+    if (leftPanel) return leftPanel;
+
+    leftPanel = document.createElement('div');
+    leftPanel.id = 'left-panel';
+
+    closeLeftBtn = document.createElement('button');
+    closeLeftBtn.id = 'left-panel-close';
+
+    // Icono de cierre con Font Awesome
+    closeLeftIcon = document.createElement('i');
+    closeLeftIcon.className = 'fas fa-times';
+    closeLeftBtn.appendChild(closeLeftIcon);
+    closeLeftBtn.onclick = closeLeftPanel;
+
+    leftPanelContent = document.createElement('div');
+    leftPanelContent.id = 'left-panel-content';
+
+    leftPanel.appendChild(closeLeftBtn);
+    leftPanel.appendChild(leftPanelContent);
+    document.body.appendChild(leftPanel);
+
+    return leftPanel;
+}
+
+
+function closeLeftPanel() {
+    if (leftPanel) {
+        leftPanel.style.display = 'none';
+    }
+}
+
+const starHTML = `                   
+    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" role="img" aria-hidden="true" class="star">
+        <path fill="currentColor" d="M12 5.21a.65.65 0 0 0-.55-.53l-3.6-.6L6.63.46a.66.66 0 0 0-1.26 0L4.16 4.08l-3.6.6a.65.65 0 0 0-.56.53.66.66 0 0 0 .31.69L3.2 7.63 2 11.12a.67.67 0 0 0 .26.76.64.64 0 0 0 .38.12.65.65 0 0 0 .41-.15L6 9.52l2.92 2.33a.65.65 0 0 0 .41.15.64.64 0 0 0 .38-.12.67.67 0 0 0 .26-.76L8.8 7.63l2.88-1.73a.66.66 0 0 0 .32-.69">
+        </path>
+    </svg> 
+`;
+
+async function openInfoLeftPanel(contentId) {
+   if (!leftPanel) {
+        openLeftPanel();
+    } 
+    closeInfoPanel();
+    leftPanel.style.display = 'block';
+    map.closePopup(); 
+    leftPanelContent.innerHTML = '<div class="panel-loading">Cargando...</div>'; 
+    closeLeftIcon.className = 'fas fa-angle-left';
+    closeLeftBtn.onclick = goBack;
+    const area = await $.getJSON(`/api/areas/${contentId}`);
+    const properties = area?.properties;
+
+    // Definición de servicios (clave JSON, etiqueta, icono)
+    const servicesConfig = [
+        { key: 'Amenities_Primeros_auxilios', label: 'Primeros auxilios', icon: './js/images/services/primeros_auxilios.png' },
+        { key: 'Amenities_TVCableSat_24h', label: 'TV Cable / Satélite 24h', icon: './js/images/services/tv_cable.png' },
+        { key: 'Amenities_CentroNegocios', label: 'Centro de negocios', icon: './js/images/services/centro_negocios.png' },
+        { key: 'Amenities_ConexionPC_Hab', label: 'Conexión PC en habitación', icon: './js/images/services/conexion_pc.png' },
+        { key: 'Amenities_AccesoInternetHab', label: 'Internet en habitación', icon: './js/images/services/internet_hab.png' },
+        { key: 'Amenities_Voltaje_110_220AC_60Hz', label: 'Voltaje', icon: './js/images/services/voltaje.png' },
+        { key: 'Recepcion_CambioMoneda', label: 'Cambio de moneda', icon: './js/images/services/cambio_moneda.png' },
+        { key: 'Recepcion_RentadeCarro', label: 'Renta de autos', icon: './js/images/services/renta_carros.png' },
+        { key: 'Recepcion_CajaSeguridad', label: 'Caja de seguridad', icon: './js/images/services/caja_seguridad.png' },
+        { key: 'Recepcion_SpanishSpoken', label: 'Español', icon: './js/images/services/spanish.png' },
+        { key: 'Recepcion_OtherLanguages', label: 'Otros idiomas', icon: './js/images/services/otros_idiomas.png' },
+        { key: 'Ascensores', label: 'Ascensores', icon: './js/images/services/elevadores.png' },
+        { key: 'Facilidades_para_discapacitados', label: 'Facilidades Discapacitados', icon: './js/images/services/discapacitados.png' },
+        { key: 'Total_bares', label: 'Bares', icon: './js/images/services/bares.png' },
+        { key: 'Total_restaurantes', label: 'Restaurantes', icon: './js/images/services/restaurantes.png' },
+    ];
+
+    const servicesHTML = servicesConfig
+        .filter(service => {
+            const value = properties?.[service.key];
+            return value && String(value).toLowerCase() !== 'no';
+        })
+        .map(service => {
+            const value = properties?.[service.key];
+            return `
+                <div class="service-item">
+                    <img src="${service.icon}" alt="${service.label}" class="service-icon">
+                    <span class="service-text">
+                        ${service.label}${value && String(value).toLowerCase() !== 'si' ? `: ${value}` : ''}
+                    </span>
+                </div>
+            `;
+        })
+        .join('');
+
+    const playaConfig = [
+        { key: 'Playa_ColorArena', label: 'Arena', icon: './js/images/services/arena.png' },
+        { key: 'Playa_servicio_Salvavidas', label: 'Salvavidas', icon: './js/images/services/salvavidas.png' },
+        { key: 'Playa_Sombrillas quitasol', label: 'Sombrillas Playa', icon: './js/images/services/sombrilla_playa.png' },
+        { key: 'Playa_Duchas', label: 'Duchas Playas', icon: './js/images/services/ducha_playa.png' },
+        { key: 'Playa_Tumbonas', label: 'Tumbonas Playa', icon: './js/images/services/tumbona_playa.png' },
+        { key: 'Piscina_Adulto', label: 'Piscinas para Adultos', icon: './js/images/services/adulto_piscina.png' },
+        { key: 'Piscina_Niño', label: 'Piscinas para Niños', icon: './js/images/services/nino_piscina.png' },
+        { key: 'Piscinas_Duchas', label: 'Duchas Piscina', icon: './js/images/services/ducha_piscina.png' },
+        { key: 'Piscinas_tumbonas', label: 'Tumbonas Piscina', icon: './js/images/services/tumbona_piscina.png' },
+    ];     
+
+
+    const playaHTML = playaConfig
+    .filter(service => {
+        const value = properties?.[service.key];
+        return value && String(value).toLowerCase() !== 'no';
+    })
+    .map(service => {
+        const value = properties?.[service.key];
+        return `
+            <div class="service-item">
+                <img src="${service.icon}" alt="${service.label}" class="service-icon">
+                <span class="service-text">
+                    ${service.label}${value && String(value).toLowerCase() !== 'si' ? `: ${value}` : ''}
+                </span>
+            </div>
+        `;
+    })
+    .join('');
+
+   const deportesConfig = [
+        { key: 'Masaje', label: 'Masaje', icon: './js/images/services/masajes.png' },
+        { key: 'Gimnasio', label: 'Gimnasio', icon: './js/images/services/gimnasio.png' },
+        { key: 'Canchas_de_squash', label: 'Squash', icon: './js/images/services/squash.png' },
+        { key: 'Canchas_de_tennis', label: 'Tenis', icon: './js/images/services/tenis.png' },
+        { key: 'Curso_de_Golf', label: 'Curso de Golf', icon: './js/images/services/golf.png' },
+        { key: 'Otros_deportes_acuaticos_playa', label: 'Deportes acuáticos', icon: './js/images/services/deportes_acuaticos.png' },
+        { key: 'Actividades_marinas_buceo', label: 'Buceo', icon: './js/images/services/buceo.png' },
+    ];        
+
+
+    const deportesHTML = deportesConfig
+    .filter(service => {
+        const value = properties?.[service.key];
+        return value && String(value).toLowerCase() !== 'no';
+    })
+    .map(service => {
+        const value = properties?.[service.key];
+        return `
+            <div class="service-item">
+                <img src="${service.icon}" alt="${service.label}" class="service-icon">
+                <span class="service-text">
+                    ${service.label}${value && String(value).toLowerCase() !== 'si' ? `: ${value}` : ''}
+                </span>
+            </div>
+        `;
+    })
+    .join('');
+
+    const leftHTML = `
+
+        <div class="panel-info-row"><span class="text-name" >${properties.NOMBRE}</span></div>
+            <div class="type-content">
+                ${starHTML.repeat(parseInt(properties.Categoría_Turística[0]))}
+                <span class="icon-text">${properties.Tipo_Hotel}</span><br>
+            </div>
+            <div class="panel-main-image">
+                <img src="/api/${properties.Foto}" alt="${properties.NOMBRE}">
+            </div>
+        </div>
+        <div class="panel-info-row">
+            <span class="normal-text">
+                ${properties?.Descripcion}
+            </span>
+        </div>
+        <hr style="margin: 8px; border: 0; border-top: 1px solid #ccc;">  
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/entidad.png" alt="Entidad" class="icon">
+                <span class="icon-text">${properties?.Propietario_Operador}</span>
+            </div>                
+        </div>   
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/place.png" alt="Dirección" class="icon">
+                <span class="icon-text">${properties?.Direccion_Ubicacion}, ${properties?.Provincia}, 
+                CP ${properties?.Codigo_Postal}
+                </span>
+            </div>                
+        </div>                    
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/phones.png" alt="Teléfono" class="icon">
+                <div class="links-column">
+                    ${properties?.Telefono}
+                </div>
+            </div>
+        </div>  
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/emails.png" alt="Email" class="icon">
+                <div class="links-column">
+                    ${properties?.E_mailAddress}
+                </div>
+            </div>
+        </div>              
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/pago.png" alt="Forma de pago" class="icon">
+                <div class="links-column">
+                    ${properties?.FormaPago_CreditCard}
+                </div>
+            </div>
+        </div>           
+        <hr style="margin: 8px; border: 0; border-top: 1px solid #ccc;">      
+        ${servicesHTML 
+            ? `<div class="panel-info-row">
+                    <span class="text-subcategory"><b>Servicios generales</b></span>
+               </div>
+               <div class="services-grid">
+                    ${servicesHTML}
+               </div>`
+            : ''
+        }
+        <hr style="margin: 8px; border: 0; border-top: 1px solid #ccc;">  
+        ${playaHTML 
+            ? `<div class="panel-info-row">
+                    <span class="text-subcategory"><b>Playas y piscinas</b></span>
+               </div>
+               <div class="services-grid">
+                    ${playaHTML}
+               </div>`
+            : ''
+        }             
+        <hr style="margin: 8px; border: 0; border-top: 1px solid #ccc;">  
+        ${deportesHTML 
+            ? `<div class="panel-info-row">
+                    <span class="text-subcategory"><b>Deportes y bienestar</b></span>
+               </div>
+               <div class="services-grid">
+                    ${deportesHTML}
+               </div>`
+            : ''
+        }   
+        <hr style="margin: 8px; border: 0; border-top: 1px solid #ccc;">  
+        <div class="panel-info-row">
+            <span class="text-subcategory"><b>Transporte y aeropuerto</b></span>
+        </div>
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/aeropuerto.png" alt="Aeropuerto cercano" class="icon">
+                <div class="links-column">
+                    ${properties?.Aeropuerto_Cercano}
+                </div>
+            </div>
+        </div> 
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/distancia.png" alt="Distancia al Aeropuerto" class="icon">
+                <div class="links-column">
+                    ${properties?.Distancia_al_aeropuerto}
+                </div>
+            </div>
+        </div>  
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/transporte.png" alt="Transporte disponible" class="icon">
+                <div class="links-column">
+                    ${properties?.OtrosMediosTransporteAeropuertoHotel}
+                </div>
+            </div>
+        </div>  
+        <div class="panel-info-row">
+            <div class="subcategory-content">
+                <img src="./js/images/costo.png" alt="Costo del transporte" class="icon">
+                <div class="links-column">
+                    ${properties?.CostoTransporteAeropuertoHotel}
+                </div>
+            </div>
+        </div>                                              
+                   
+    `;          
+    leftPanelContent.innerHTML = leftHTML;
+    navigationStack.push(leftHTML); 
+}
+
+function goBack() {
+    if (navigationStack.length > 1) {
+        navigationStack.pop(); // Eliminar contenido actual
+        const previousContent = navigationStack[navigationStack.length - 1];
+        closeLeftIcon.className = 'fas fa-times';
+        closeLeftBtn.onclick = closeLeftPanel;        
+        leftPanelContent.innerHTML = previousContent;
+    }
+}
+
+
 function getPopupContent(data){
     let popupContent = `<p><center><span class="text-subcategory">${data.name.es}</span></center></p>`;
     // Construye el contenido del popup con los datos del vehículo
@@ -282,8 +614,29 @@ function getPopupContent(data){
     return popupContent;
 }  
 
+function getInstalationPopupContent(feature){
+    const properties = feature?.properties;
+    //let popupContent = `<center><span class="text-subcategory"><b>Datos de la Instalación</b></span></center>`;
+    let popupContent = `<center><span class="text-subcategory"><b>${properties?.NOMBRE}</b></span></center>`;
+    popupContent += `
+        <div class="type-content">
+            ${starHTML.repeat(parseInt(properties.Categoría_Turística[0]))}
+        </div>`;
+
+    let imagen = properties?.Foto || 'Sin imagen';
+    if (imagen) {
+        popupContent += `<img src="/api/${imagen}"  width="250" style="margin: 4px 0;"  alt="Imagen no disponible">`;
+    }
+    //popupContent += `<a href="#" onclick="openInfoLeftPanel(${properties.id}); return false;">`;
+    //popupContent += `<p>Clic para más información</p></a>`;
+    popupContent += `<center><span class="normal-text">${properties?.Situación_Hotel}</span></center>`;
+    popupContent += `<div><button class="panel-gallery-btn" onclick="openInfoLeftPanel(${properties.id}); return true;">Ver detalles</button></div>`;
+
+    return popupContent;
+} 
+
 function createMarkers(){
-    $.getJSON(`http://localhost/api/points?bbox=-81.62388715,21.58320191,-81.35649683,21.70624878`, function(result) {					
+    $.getJSON(`/api/points?bbox=-81.62388715,21.58320191,-81.35649683,21.70624878`, function(result) {					
         if (result.length > 0){
             let index = 0;
             let chunkSize = 20;
@@ -310,13 +663,20 @@ function createMarkers(){
                         closeButton: false,
                         autoClose: true,  // IMPORTANTE: evitar cierre automático
                         closeOnClick: false,  // No cerrar al hacer click
+                        keepInView: true, 
                         offset: L.point(0, -10) 
                     });
 
                     // Abrir panel lateral con scroll al hacer click
                     marker.on('click', function(e) {
-                        openInfoPanel(data.id);
+                        if (isMobileDevice()) {
+                            this.openPopup();
+                        } else {
+                            openInfoPanel(data.id);
+                        }
                     });
+                    // Guardar referencia para poder centrar después
+                    markersById[data.id] = marker;
 
                     // Eventos mouseover/mouseout
                     marker.on('mouseover', function(e) {
@@ -363,6 +723,54 @@ function createMarkers(){
 
 }
 
+function focusMarkerById(pointId, zoom = 17) {
+    document.getElementById("nombre").value = "";
+    const marker = markersById[pointId];
+    if (marker) {
+        const targetZoom = zoom || map.getZoom();
+        map.setView(marker.getLatLng(), targetZoom);
+        marker.openPopup();
+    }
+}
+
+function focusFeature(elemento, feature, id, zoom = 18) {
+    if (isMobileDevice()) {
+        closeLeftPanel();
+    }    
+
+    event.preventDefault();
+    // 2. Quitar la clase 'seleccionada' de TODAS las filas
+    document.querySelectorAll('.fila-con-enlace').forEach(fila => {
+        fila.classList.remove('seleccionada');
+    });
+    // 3. Encontrar la fila padre y agregar clase 'seleccionada'
+    elemento.closest('.fila-con-enlace').classList.add('seleccionada');
+
+    const coord = feature; //.properties.Coordenadas_GPS_Centro;
+    const [lat, lon] = coord.split(',');
+    const latNum = parseFloat(lat);
+    const lonNum = parseFloat(lon);
+    const targetZoom = zoom || map.getZoom();
+    map.closePopup(); 
+    map.setView([latNum, lonNum], targetZoom, { animate: false });    
+    openPopupById(id);
+}
+
+function openPopupById(featureId) {
+    // Buscar el layer que corresponde al feature con ese ID
+    areasLayer.eachLayer(function(layer) {
+        const feature = layer.feature;
+        
+        if (feature && feature.properties && feature.properties.id === featureId) {
+            // Abrir popup
+            layer.openPopup();            
+            return layer; // Devolver el layer encontrado
+        }
+    });
+    
+    return null; // No encontrado
+}
+
 /*function formatPropertyName(propertyName) {
     const propertyNameMap = {
         'nombre': 'Municipio',
@@ -385,101 +793,6 @@ function createMarkers(){
     return propertyNameMap[propertyName] || propertyName.charAt(0).toUpperCase() + propertyName.slice(1);
 }*/
 
-// Implementar FeatureInfo para la capa WMS
-/*map.on('click', function (e) {
-    let point = map.latLngToContainerPoint(e.latlng, map.getZoom());
-    let size = map.getSize();
-
-    let params = {
-        request: 'GetFeatureInfo',
-        service: 'WMS',
-        srs: 'EPSG:4326',
-        styles: '',
-        transparent: true,
-        version: '1.1.1',
-        format: 'image/png',
-        bbox: map.getBounds().toBBoxString(),
-        height: size.y,
-        width: size.x,
-        layers: layerData, // O la capa que corresponda
-        query_layers: layerData,
-        info_format: 'application/json',
-        feature_count: 1,
-        x: Math.round(point.x),
-        y: Math.round(point.y)
-    };
-
-    let url = urlGeoserver + L.Util.getParamString(params) 
-
-    fetch(url)
-        .then(response => {
-            if (params.info_format === 'application/json') {
-                return response.json().then(data => ({ format: 'json', data }));
-            } else {
-                return response.text().then(text => ({ format: 'gml', data: text }));
-            }
-        })
-        .then(result => {
-            if (result.format === 'json') {
-                const data = result.data;
-                if (data.features && data.features.length > 0) {
-                    const feature = data.features[0];
-                    const properties = feature.properties;
-                    let popupContent = '<div class="popup-info-container">';
-                    popupContent += '<div class="popup-info-title">';
-                    popupContent += '<span class="popup-title-text">Información</span>';
-					popupContent += '</div>';
-                    for (let prop in properties) {
-                        if (!['the_geom', 'geom', 'geometry', 'bbox', 'id'].includes(prop)) {
-							popupContent += `<div class="popup-info-item"><span class="popup-info-label">${formatPropertyName(prop)}:</span> <span class="popup-info-value">${properties[prop] ? properties[prop] : '-'}</span></div>`;							
-                        }
-                    }
-                    popupContent += '</div>';
-                    L.popup({ className: 'custom-popup' }).setLatLng(e.latlng).setContent(popupContent).openOn(map);
-                }
-            } else if (result.format === 'gml') {
-                // Parsear GML (XML)
-                const parser = new DOMParser();
-                const xmlDoc = parser.parseFromString(result.data, "text/xml");
-                // Buscar el primer feature
-                const feature = xmlDoc.getElementsByTagName(layerData + "_feature")[0];
-                if (feature) {
-                    // Extraer el ID del objeto (buscar en las propiedades comunes)
-                    let objectId = null;
-                    for (let node of feature.children) {
-                        if (node.tagName.includes("gml:")) continue;
-                        // Buscar campos que contengan 'id' en el nombre
-                        if (node.tagName.toLowerCase() === 'id' ||
-                            node.tagName.toLowerCase() === 'gid') {
-                            objectId = node.textContent.trim();
-                            break;
-                        }
-                    }
-
-                    let popupContent = '<div class="popup-info-container">';
-                    popupContent += '<div class="popup-info-title">';
-                    popupContent += '<span class="popup-title-text">Información</span>';
-                    if (!isThematic) {
-                        popupContent += `<i class="fas fa-file-alt popup-table-icon" onclick="mostrarBloque('recordsTable','${objectId}')" title="Ver registros"></i>`;
-                        popupContent += `<i class="fas fa-table popup-table-icon" onclick="handlePopupTableClick('${objectId}')" title="Ver en tabla"></i>`;
-                    }
-                    popupContent += '</div>';
-                    for (let node of feature.children) {
-                        if (node.tagName.includes("gml:")) continue;
-                        popupContent += `<div class="popup-info-item"><span class="popup-info-label">${node.tagName}:</span> <span class="popup-info-value">${node.textContent.trim()}</span></div>`;
-                    }
-                    popupContent += '</div>';
-                    L.popup({ className: 'custom-popup' }).setLatLng(e.latlng).setContent(popupContent).openOn(map);
-                } else {
-                    L.popup({ className: 'custom-popup' }).setLatLng(e.latlng).setContent('Objeto no encontrado').openOn(map);
-                }
-            }
-        })
-        .catch(error => {
-            console.error('Error al obtener información de la capa:', error);
-        });
-});*/
-
 // create fullscreen control
 let fsControl = L.control.fullscreen({
     position: 'bottomright'
@@ -496,11 +809,13 @@ map.on('exitFullscreen', function () {
 });
 
 // Configurar el control de capas en una posición diferente para evitar solapamiento
-let layerControl = L.control.layers(baseLayers, overLayers, {
+layerControl = L.control.layers(baseLayers, overLayers, {
     inline: true, // enable inline mode
     collapsed: true,
     position: 'bottomleft' 
 }).addTo(map);
+
+loadGeoJSON();
 
 let controlZoomDisplay = map.zoomDisplayControl;
 L.DomEvent.disableClickPropagation(controlZoomDisplay._container);
@@ -509,6 +824,173 @@ controlZoomDisplay._container.title = 'Zoom a toda la extensión del mapa';
 L.DomEvent.addListener(controlZoomDisplay._container, 'click', function () {
     map.setView(centerData, zoomData);
 });
+
+L.LogoControl = L.Control.extend({
+    options: {
+        position: 'topleft'
+    },
+
+    onAdd: function (map) {
+        var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control logo-control');
+        var button = L.DomUtil.create('a', 'img-logo-control', container);
+        button.href = "https://www.cuba.travel/destinos/isla-de-la-juventud"; // 
+        button.target = "_blank"; // Abrir en nueva pestaña
+        button.rel = "noopener noreferrer"; // Seguridad        
+        button.innerHTML = '<img width="85%" class="logo-control-img" src="./js/images/logo.jpg">';
+        L.DomEvent.disableClickPropagation(button);
+        container.title = "Cayo Largo del Sur";
+        return container;
+    },
+});
+
+new L.LogoControl().addTo(map);
+
+L.MenuControl = L.Control.extend({
+    options: {
+        position: 'topleft'
+    },
+
+    onAdd: function (map) {
+        var container = L.DomUtil.create('div', 'leaflet-bar leaflet-control logo-control');
+        var button = L.DomUtil.create('a', 'img-logo-control', container);       
+        //button.innerHTML = '<i class="fas fa-building"></i>'; // Icono de menú
+        button.innerHTML = '<img width="85%" class="logo-control-img" src="./js/images/entidad.png">';
+        button.href = "javascript:void(0);"; // Enlace que no navega
+        button.onclick = function(e) {
+            e.preventDefault(); // Prevenir comportamiento por defecto
+            openLeftPanel();
+        };        
+        L.DomEvent.disableClickPropagation(button);
+        container.title = "Instalaciones";
+        return container;
+    },
+});
+
+new L.MenuControl().addTo(map)
+
+new L.Control.BootstrapModal({
+    modalId: 'modal_search',
+    tooltip: 'Buscar en el mapa',
+    glyph: 'search',
+    position: "topleft" 
+}).addTo(map);	
+
+var bsearch = L.DomUtil.get("search");
+if (bsearch) {
+    L.DomEvent.addListener(bsearch, 'click', function() {
+
+        var name = document.getElementById("nombre").value;
+        document.getElementById("nombre").value = "";
+        if (name) {
+            //centerMap(name, 14);
+
+        } else {
+            notifyMessage('danger', 'Lugar de interés no encontrado');
+        }
+    });
+} 
+
+// --- Búsqueda incremental en el modal ---
+const searchInput = document.getElementById('nombre');
+let searchResultsBox;
+
+function ensureSearchResultsBox() {
+    if (searchResultsBox) return searchResultsBox;
+    searchResultsBox = document.createElement('div');
+    searchResultsBox.id = 'search-results';
+    searchResultsBox.className = 'search-results';
+    const inputWrapper = searchInput ? searchInput.parentElement : null;
+    if (inputWrapper) {
+        inputWrapper.appendChild(searchResultsBox);
+    } else {
+        document.body.appendChild(searchResultsBox);
+    }
+    return searchResultsBox;
+}
+
+function clearSearchResults() {
+    if (searchResultsBox) {
+        searchResultsBox.innerHTML = '';
+        searchResultsBox.style.display = 'none';
+    }
+}
+
+function debounce(fn, delay = 250) {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+    };
+}
+
+async function fetchPointsByName(query) {
+    const where = encodeURIComponent(JSON.stringify({ name: query }));
+    const url = `/api/points?where=${where}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Error en la búsqueda');
+    return res.json();
+}
+
+function renderSearchResults(results) {
+    ensureSearchResultsBox();
+    if (!results || !results.length) {
+        clearSearchResults();
+        return;
+    }
+    const itemsHTML = results.map(item => {
+        const displayName = item?.name?.es || 'Sin nombre';
+        const pid = item?.id ?? '';
+        return `<button type="button" class="search-result-item" data-id="${pid}">
+            <span class="result-name">${displayName}</span>
+        </button>`;
+    }).join('');
+    searchResultsBox.innerHTML = itemsHTML;
+    searchResultsBox.style.display = 'block';
+
+    // Enlazar eventos de selección
+    searchResultsBox.querySelectorAll('.search-result-item').forEach(btn => {
+        btn.onclick = () => {
+            const pid = btn.getAttribute('data-id');
+            const label = btn.querySelector('.result-name')?.textContent || '';
+            if (searchInput) searchInput.value = label;
+            clearSearchResults();
+            // Cerrar modal si existe instancia de bootstrap
+            const modalEl = document.getElementById('modal_search');
+            if (modalEl && window.bootstrap) {
+                const instance = bootstrap.Modal.getInstance(modalEl);
+                if (instance) instance.hide();
+            }
+            if (pid) {
+                focusMarkerById(pid, 18);
+            }
+        };
+    });
+}
+
+if (searchInput) {
+    ensureSearchResultsBox();
+    const debouncedSearch = debounce(async (event) => {
+        const q = event.target.value.trim();
+        if (q.length < 2) {
+            clearSearchResults();
+            return;
+        }
+        try {
+            const results = await fetchPointsByName(q);
+            renderSearchResults(results);
+        } catch (err) {
+            console.error('Error buscando puntos:', err);
+            clearSearchResults();
+        }
+    }, 350);
+
+    searchInput.addEventListener('input', debouncedSearch);
+    searchInput.addEventListener('blur', () => setTimeout(clearSearchResults, 200));
+}
+
+function centerMap(name, zoom) {
+    //map.setView(markers[device].getLatLng(),zoom == 0 ? map.getZoom() : zoom);
+}
 
 function notify(type, message, duration = 3000) {
     const toast = document.createElement("div");

@@ -9,6 +9,7 @@
 
 	<link rel="shortcut icon" type="image/x-icon" href="favicon.ico"/>	
 	<link rel="stylesheet" href="./js/leaflet.css"/>
+	<link rel="stylesheet" href="./js/bootstrap/css/bootstrap.min.css"/>	
 	<link rel="stylesheet" href="./js/leaflet.zoomdisplay.css"/>
 	<link rel="stylesheet" href="./js/Control.FullScreen.css"/>	
 	<link rel="stylesheet" href="./js/maplegendwms.css"/>	
@@ -16,6 +17,7 @@
 	<link rel="stylesheet" href="./js/mymap.css"/>
 	<link rel="stylesheet" href="./js/MarkerCluster.css" />
 	<link rel="stylesheet" href="./js/MarkerCluster.Default.css" />
+	<link rel="stylesheet" type="text/css" href="./js/leaflet-bootstrapmodal.css" />
 	
 	<style>
 		body {
@@ -37,13 +39,40 @@
 <body>
 	<script src="./js/leaflet.js"></script>
 	<script src="./js/jquery-3.7.1.min.js"></script>
+	<script src="./js/bootstrap/js/bootstrap.bundle.min.js"></script>	
 	<script src="./js/leaflet.zoomdisplay.js"></script>
 	<script src="./js/Control.FullScreen.js"></script>
 	<script src="./js/maplegendwms.js"></script>
-    <script src="./js/leaflet.markercluster.js"></script>		
+    <script src="./js/leaflet.markercluster.js"></script>	
+	<script type="text/javascript" src="./js/leaflet-bootstrapmodal.js"></script>	
 
 	<div id='map'></div>
-  
+	<div class="modal" role="dialog" tabindex="-1" id="modal_search">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title">Buscar lugar de interés</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<form>
+						<div class="tab-content" id="nav-tabContent">
+							<div class="tab-pane fade show active" id="nav-chapa" role="tabpanel" aria-labelledby="nav-chapa-tab">
+								<div class="form-group ui-front">
+									<label for="nombre" class="col-form-label">Nombre:</label>
+									<input id="nombre" class="form-control" autocomplete="off" aria-label="Escribir nombre"></select>					
+								</div>	            						  
+							</div>                                 
+						</div>	
+					</form>
+				</div>
+				<div class="modal-footer">
+					<button id="search" type="button" class="btn btn-primary" data-bs-dismiss="modal">Cerrar</button>
+				</div>
+			</div>
+		</div>
+	</div>  
+
 	<script src="./js/config.js"></script>
 	<script src="./js/mymap.js"></script>
 	

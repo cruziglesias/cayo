@@ -157,6 +157,41 @@
     transform: translateY(0);
 }
 
+#left-panel {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 350px;
+	height: 100%;
+	background: #fff;
+	box-shadow: 0 0 10px rgba(0,0,0,0.2);
+	z-index: 2000;
+	overflow: auto;
+	display: none;
+}
+
+#left-panel-close {
+	position: fixed; /* flotante, no se desplaza al hacer scroll */
+	top: 16px;
+	left: 295px;
+	border: none;
+	background: #444;
+	color: #fff;
+	width: 32px;
+	height: 32px;
+	border-radius: 16px;
+	cursor: pointer;
+	font-size: 18px;
+	line-height: 32px;
+	z-index: 2100; /* por encima del contenido */
+	opacity: 0.9;
+}
+
+#left-panel-content {
+	padding: 12px 16px 16px 16px; /* comienza desde arriba */
+	overflow: auto; /* Scroll en ambos ejes */
+}
+
 /* Panel lateral de información */
 #info-panel {
 	position: fixed;
@@ -259,6 +294,9 @@
 	border-radius: 4px;
 	cursor: pointer;
 	font-size: 12px;
+    margin-top: 10px; /* Separación superior */
+    margin-left: auto; /* Para alinear a la derecha */
+    display: block	
 }
 
 .panel-gallery-btn:hover {
@@ -364,4 +402,149 @@
     display: flex;
     flex-direction: column; /* Los enlaces en columna */
     gap: 4px; /* Espacio entre enlaces */
+}
+
+/* Grid de servicios en panel lateral */
+.services-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.service-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 6px;
+}
+
+.service-icon {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    margin-bottom: 4px;
+}
+
+.service-text {
+    font-size: 11px;
+    line-height: 1.3;
+    color: #333;
+}
+
+/* Resultados de búsqueda en modal */
+#search-results {
+	margin-top: 6px;
+	border: 1px solid #e0e0e0;
+	border-radius: 6px;
+	max-height: 220px;
+	overflow-y: auto;
+	background: #fff;
+	box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+	display: none;
+}
+
+.search-result-item {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	width: 100%;
+	padding: 8px 10px;
+	border: none;
+	background: #fff;
+	cursor: pointer;
+	text-align: left;
+	border-bottom: 1px solid #f0f0f0;
+}
+
+.search-result-item:last-child {
+	border-bottom: none;
+}
+
+.search-result-item:hover {
+	background: #f5f9ff;
+}
+
+.result-name {
+	font-weight: 500;
+	color: #222;
+}
+
+.result-id {
+	font-size: 12px;
+	color: #666;
+	margin-left: 8px;
+}
+
+.star {
+    pointer-events: none;
+    inline-size: 10px;
+    block-size: 10px;
+    max-block-size: 10px;
+    max-inline-size: 10px;
+	color: orange;
+}
+
+.type-content {
+    display: flex;
+	align-items: center;  
+	justify-content: center; 
+	text-align: center; 
+	gap: 3px;
+}
+
+/* Clase para el enlace */
+.enlace-selectable {
+    /* Estilo normal */
+    font-size: 0.9rem;
+    font-weight: 400;
+    letter-spacing: .00937em;
+    line-height: 1.75rem;
+
+    display: block;
+    text-decoration: none;
+    color: #333;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-radius: 4px;
+    
+    /* Para asegurar que ocupe el espacio disponible */
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Efecto hover - cambio de color de texto */
+.enlace-selectable:hover {
+    color: #0066cc;
+    background-color: rgba(0, 102, 204, 0.05);
+}
+
+/* Estado seleccionado - cuando se hace clic */
+.enlace-selectable.seleccionado {
+    background-color: #e3f2fd; /* Color azul claro para indicar selección */
+    color: #0066cc;
+    font-weight: 500;
+    border-left: 3px solid #0066cc;
+}
+
+/* Opcional: efecto cuando está activo (durante el clic) */
+.enlace-selectable:active {
+    transform: scale(0.98);
+    background-color: #d0e7ff;
+}
+
+/* Para cuando está dentro de una fila de tabla o lista */
+.fila-con-enlace {
+    transition: background-color 0.2s ease;
+}
+
+.fila-con-enlace:hover {
+    background-color: #f5f5f5;
+}
+
+.fila-con-enlace.seleccionada {
+    background-color: #e3f2fd;
+    border-left: 3px solid #0066cc;
 }
